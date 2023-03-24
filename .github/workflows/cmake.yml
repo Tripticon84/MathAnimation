@@ -1,0 +1,37 @@
+name: Cmake
+
+on:
+  workflow_dispatch:
+
+env:
+  YASM_VERSION: 1.3.0
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+    
+    - name: Download Yasm
+      id: download-yasm
+      run: |
+        curl -LO https://www.tortall.net/projects/yasm/releases/yasm-${{ env.YASM_VERSION }}-win64.exe
+    
+    - name: Rename Yasm exe
+      run: |
+        mv yasm-${{ env.YASM_VERSION }}-win64.exe yasm.exe
+    
+    - name: Add Yasm to PATH
+      run: |
+        echo "Adding Yasm to PATH..."
+        setx PATH "%PATH%;${{ env.RUNNER_TOOL_CACHE }}/yasm"
+        echo "Yasm added to PATH."
+    - name: Setup cmake
+      uses: jwlawson/actions-setup-cmake@v1.13
+      with:
+        cmake-version: '3.16.x'
+    - name: Check cmake
+      run: cmake --version
+      
+    - name: Clone repository
+      run: git clone --recursive https://github.com/ambrosiogabe/MathAnimation
