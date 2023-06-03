@@ -33,7 +33,7 @@ jobs:
         pushd build
         cmake ..
         popd
-        dotnet publish MathAnimationsPrj.sln -c Release -o out
+        dotnet publish build/MathAnimationsPrj.sln -c Release -o out
         echo "##[endgroup]"
     - name: Package compiled files
       run: |
