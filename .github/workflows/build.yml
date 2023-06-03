@@ -32,7 +32,7 @@ jobs:
         mkdir build
         pushd build
         cmake ..
-        C:\Windows\Microsoft.NET\Framework\v4.0.30319\msbuild.exe 
+        C:\Windows\Microsoft.NET\Framework\v4.0.30319\msbuild.exe publish build/MathAnimationsPrj.sln -c Release -o out
         echo "##[endgroup]"
     - name: Package compiled files
       run: |
