@@ -33,6 +33,7 @@ jobs:
         pushd build
         cmake ..
         popd
+        cd ./build/
         dotnet publish -c Release -o out
         echo "##[endgroup]"
     - name: Package compiled files
