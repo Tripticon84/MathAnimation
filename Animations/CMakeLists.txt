@@ -104,11 +104,13 @@ endif()
 add_custom_command(TARGET MathAnimations
     COMMAND ${CMAKE_COMMAND} -E make_directory
         $<TARGET_FILE_DIR:MathAnimations>/assets/grammars
+    COMMAND ${CMAKE_COMMAND} -E make_directory 
+        ${MATH_ANIMATIONS_ASSETS_DIR}/grammars
     COMMAND ${CMAKE_COMMAND} -E copy
         ${MATH_ANIMATIONS_GRAMMARS_DIR}/minimalCpp/syntaxes/cpp.tmLanguage.json
         ${MATH_ANIMATIONS_GRAMMARS_DIR}/glsl/syntaxes/glsl.tmLanguage.json
         ${MATH_ANIMATIONS_GRAMMARS_DIR}/javascript/syntaxes/javascript.json
-        $<TARGET_FILE_DIR:MathAnimations>/assets/grammars
+        ${MATH_ANIMATIONS_ASSETS_DIR}/grammars
 
     COMMENT "Copying grammars"
     POST_BUILD
@@ -117,6 +119,8 @@ add_custom_command(TARGET MathAnimations
 add_custom_command(TARGET MathAnimations
     COMMAND ${CMAKE_COMMAND} -E make_directory
         $<TARGET_FILE_DIR:MathAnimations>/assets/themes
+    COMMAND ${CMAKE_COMMAND} -E make_directory
+        ${MATH_ANIMATIONS_ASSETS_DIR}/themes
     COMMAND ${CMAKE_COMMAND} -E copy
         ${MATH_ANIMATIONS_THEMES_DIR}/atomOneDark/themes/OneDark.json
         ${MATH_ANIMATIONS_THEMES_DIR}/gruvbox/themes/gruvbox-dark-soft.json
@@ -124,7 +128,7 @@ add_custom_command(TARGET MathAnimations
         ${MATH_ANIMATIONS_THEMES_DIR}/oneMonokai/themes/OneMonokai-color-theme.json
         ${MATH_ANIMATIONS_THEMES_DIR}/palenight/themes/palenight.json
         ${MATH_ANIMATIONS_THEMES_DIR}/panda/dist/Panda.json
-        $<TARGET_FILE_DIR:MathAnimations>/assets/themes
+        ${MATH_ANIMATIONS_ASSETS_DIR}/themes
 
     COMMENT "Copying themes"
     POST_BUILD

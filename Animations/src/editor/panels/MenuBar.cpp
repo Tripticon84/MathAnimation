@@ -1,6 +1,7 @@
 #include "editor/panels/MenuBar.h"
 #include "editor/imgui/ImGuiLayer.h"
 #include "editor/EditorLayout.h"
+#include "editor/UndoSystem.h"
 #include "core/Application.h"
 #include "core/Profiling.h"
 #include "renderer/Colors.h"
@@ -56,6 +57,16 @@ namespace MathAnim
 
 				if (ImGui::BeginMenu("Edit"))
 				{
+					if (ImGui::MenuItem("Undo", "Ctrl+Z"))
+					{
+						UndoSystem::undo(Application::getUndoSystem());
+					}
+
+					if (ImGui::MenuItem("Redo", "Ctrl+Shift+Z"))
+					{
+						UndoSystem::redo(Application::getUndoSystem());
+					}
+
 					ImGui::EndMenu();
 				}
 
@@ -172,15 +183,15 @@ namespace MathAnim
 					{
 					case SaveEditorLayoutError::ReservedLayoutName:
 						errorMessage = "Failed to save editor layout. Name '" + std::string(saveNameBuffer) + "' is reserved.";
-						g_logger_warning("Failed to save editor layout. Name '%s' is reserved.", saveNameBuffer);
+						g_logger_warning("Failed to save editor layout. Name '{}' is reserved.", saveNameBuffer);
 						break;
 					case SaveEditorLayoutError::FailedToSaveImGuiIni:
 						errorMessage = "Failed to save editor layout. Failed to save imgui file for '" + std::string(saveNameBuffer) + "'";
-						g_logger_warning("Failed to save editor layout. Failed to save imgui file for '%s'.", saveNameBuffer);
+						g_logger_warning("Failed to save editor layout. Failed to save imgui file for '{}'.", saveNameBuffer);
 						break;
 					case SaveEditorLayoutError::FailedToConvertIniToJson:
 						errorMessage = "Failed to save editor layout. Failed to save convert imgui file to json for '" + std::string(saveNameBuffer) + "'";
-						g_logger_warning("Failed to save editor layout. Failed to save convert imgui file to json for '%s'.", saveNameBuffer);
+						g_logger_warning("Failed to save editor layout. Failed to save convert imgui file to json for '{}'.", saveNameBuffer);
 						break;
 					case SaveEditorLayoutError::None:
 						break;

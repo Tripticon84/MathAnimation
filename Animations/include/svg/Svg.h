@@ -7,10 +7,17 @@
 namespace MathAnim
 {
 	struct AnimObject;
-	struct OrthoCamera;
-	struct PerspectiveCamera;
 	struct Texture;
 	struct Framebuffer;
+
+	enum class BinaryPathCommandType : uint8
+	{
+		MoveTo = 0,
+		LineTo,
+		CurveTo,
+		QuadTo,
+		Length
+	};
 
 	enum class CurveType : uint8
 	{
@@ -91,9 +98,13 @@ namespace MathAnim
 		void normalize();
 		void calculateApproximatePerimeter();
 		void calculateBBox();
-		void calculateMd5();
+		void calculateMd5(const RawMemory& b64Path);
 		void finalize();
+		void finalizeWithB64(const RawMemory& b64String);
+		void finalizeWithB64(const std::string& b64String);
 		std::string getPathAsString() const;
+		// NOTE: See binary path format in SvgParser.h for details on the format of this string
+		RawMemory getPathAsBinaryString() const;
 		float calculateSvgScale(float targetWidth) const;
 		void render(float svgScale, const Texture& texture, const Vec2& textureOffset) const;
 		void renderAsync(float svgScale, const Texture& texture, const Vec2& textureOffset) const;

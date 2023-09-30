@@ -5,8 +5,6 @@
 #include "renderer/Renderer.h"
 #include "renderer/Framebuffer.h"
 #include "renderer/Fonts.h"
-#include "renderer/PerspectiveCamera.h"
-#include "renderer/OrthoCamera.h"
 #include "core/Application.h"
 #include "core/Serialization.hpp"
 #include "latex/LaTexLayer.h"
@@ -19,6 +17,25 @@ namespace MathAnim
 {
 	// Number of spaces for tabs. Make this configurable
 	constexpr int tabDepth = 2;
+
+	static void setTextHelper(char** ogText, int32* ogTextLength, const char* newText, size_t newTextLength)
+	{
+		*ogText = (char*)g_memory_realloc(*ogText, sizeof(char) * (newTextLength + 1));
+		*ogTextLength = (int32_t)newTextLength;
+		g_memory_copyMem(*ogText, (void*)newText, newTextLength * sizeof(char));
+		(*ogText)[newTextLength] = '\0';
+	}
+
+	static void setTextHelper(char** ogText, int32* ogTextLength, const char* newText)
+	{
+		size_t newTextLength = std::strlen(newText);
+		return setTextHelper(ogText, ogTextLength, newText, newTextLength);
+	}
+
+	static void setTextHelper(char** ogText, int32* ogTextLength, const std::string& newText)
+	{
+		return setTextHelper(ogText, ogTextLength, newText.c_str(), newText.length());
+	}
 
 	void TextObject::init(AnimationManagerData* am, AnimObjId parentId)
 	{
@@ -137,11 +154,27 @@ namespace MathAnim
 		}
 	}
 
+	void TextObject::setText(const std::string& newText)
+	{
+		setTextHelper(&text, &textLength, newText);
+	}
+
+	void TextObject::setText(const char* newText, size_t newTextSize)
+	{
+		setTextHelper(&text, &textLength, newText, newTextSize);
+	}
+
+	void TextObject::setText(const char* newText)
+	{
+		setTextHelper(&text, &textLength, newText);
+	}
+
 	TextObject TextObject::deserialize(const nlohmann::json& j, uint32 version)
 	{
 		switch (version)
 		{
 		case 2:
+		case 3:
 		{
 			TextObject res = {};
 
@@ -165,7 +198,7 @@ namespace MathAnim
 			break;
 		}
 
-		g_logger_warning("TextObject serialized with unknown version '%d'.", version);
+		g_logger_warning("TextObject serialized with unknown version '{}'.", version);
 		return {};
 	}
 
@@ -198,7 +231,7 @@ namespace MathAnim
 			return res;
 		}
 
-		g_logger_error("Invalid version '%d' while deserializing text object.", version);
+		g_logger_error("Invalid version '{}' while deserializing text object.", version);
 		TextObject res;
 		g_memory_zeroMem(&res, sizeof(TextObject));
 		return res;
@@ -213,26 +246,6 @@ namespace MathAnim
 		res.text = (char*)g_memory_allocate(sizeof(defaultText) / sizeof(char));
 		g_memory_copyMem(res.text, (void*)defaultText, sizeof(defaultText) / sizeof(char));
 		res.textLength = (sizeof(defaultText) / sizeof(char)) - 1;
-		res.text[res.textLength] = '\0';
-		return res;
-	}
-
-	TextObject TextObject::createCopy(const TextObject& from)
-	{
-		TextObject res = {};
-		if (from.font)
-		{
-			// NOTE: We can pass nullptr for vg here because it shouldn't actually need it
-			res.font = Fonts::loadFont(from.font->fontFilepath.c_str());
-		}
-		else
-		{
-			res.font = nullptr;
-		}
-
-		res.text = (char*)g_memory_allocate((from.textLength + 1) * sizeof(char));
-		g_memory_copyMem(res.text, (void*)from.text, from.textLength);
-		res.textLength = from.textLength;
 		res.text[res.textLength] = '\0';
 		return res;
 	}
@@ -293,29 +306,27 @@ namespace MathAnim
 
 	void LaTexObject::setText(const std::string& str)
 	{
-		if (text)
+		if (!isParsingLaTex)
 		{
-			g_memory_free(text);
-			text = nullptr;
-			textLength = 0;
+			setTextHelper(&text, &textLength, str);
 		}
-
-		this->text = (char*)g_memory_allocate(sizeof(char) * (str.length() + 1));
-		this->textLength = (int32)str.length();
-
-		g_memory_copyMem(this->text, (void*)str.c_str(), sizeof(char) * str.length());
-		this->text[this->textLength] = '\0';
 	}
 
 	void LaTexObject::setText(const char* cStr)
 	{
-		setText(std::string(cStr));
+		if (!isParsingLaTex)
+		{
+			setTextHelper(&text, &textLength, cStr);
+		}
 	}
 
 	void LaTexObject::parseLaTex()
 	{
-		LaTexLayer::laTexToSvg(text, isEquation);
-		isParsingLaTex = true;
+		if (!isParsingLaTex)
+		{
+			LaTexLayer::laTexToSvg(text, isEquation);
+			isParsingLaTex = true;
+		}
 	}
 
 	void LaTexObject::serialize(nlohmann::json& memory) const
@@ -347,7 +358,7 @@ namespace MathAnim
 			return res;
 		}
 
-		g_logger_error("Invalid version '%d' while deserializing text object.", version);
+		g_logger_error("Invalid version '{}' while deserializing text object.", version);
 		LaTexObject res;
 		g_memory_zeroMem(&res, sizeof(LaTexObject));
 		return res;
@@ -367,6 +378,7 @@ namespace MathAnim
 		switch (version)
 		{
 		case 2:
+		case 3:
 		{
 			LaTexObject res = {};
 
@@ -380,7 +392,7 @@ namespace MathAnim
 			break;
 		}
 
-		g_logger_warning("LaTexObject serialized with unknown version '%d'.", version);
+		g_logger_warning("LaTexObject serialized with unknown version '{}'.", version);
 		return {};
 	}
 
@@ -405,6 +417,12 @@ namespace MathAnim
 		Font* font = Fonts::getDefaultMonoFont();
 		if (font == nullptr)
 		{
+			static bool loggedWarning = false;
+			if (!loggedWarning)
+			{
+				g_logger_warning("No Default Mono Font found. Cannot generate code block.");
+				loggedWarning = true;
+			}
 			return;
 		}
 
@@ -428,7 +446,7 @@ namespace MathAnim
 		size_t codeBlockCursor = 0;
 		for (size_t textIndex = 0; textIndex < (size_t)textLength; textIndex++)
 		{
-			Vec4 textColor = syntaxTheme->defaultForeground;
+			Vec4 textColor = syntaxTheme->defaultForeground.color;
 			if (codeBlockCursor < highlights.segments.size())
 			{
 				if (textIndex >= highlights.segments[codeBlockCursor].endPos)
@@ -531,7 +549,17 @@ namespace MathAnim
 		obj->generatedChildrenIds.clear();
 
 		// Next init again which should regenerate the children
-		init(am, obj->id);
+		this->init(am, obj->id);
+	}
+
+	void CodeBlock::setText(const char* newText)
+	{
+		setTextHelper(&text, &textLength, newText);
+	}
+
+	void CodeBlock::setText(const std::string& newText)
+	{
+		setTextHelper(&text, &textLength, newText);
 	}
 
 	void CodeBlock::serialize(nlohmann::json& memory) const
@@ -563,7 +591,7 @@ namespace MathAnim
 			return res;
 		}
 
-		g_logger_error("Invalid version '%d' while deserializing code object.", version);
+		g_logger_error("Invalid version '{}' while deserializing code object.", version);
 		CodeBlock res;
 		g_memory_zeroMem(&res, sizeof(CodeBlock));
 		return res;
@@ -584,6 +612,7 @@ namespace MathAnim
 		switch (version)
 		{
 		case 2:
+		case 3:
 		{
 			CodeBlock res = {};
 
@@ -598,7 +627,7 @@ namespace MathAnim
 			break;
 		}
 
-		g_logger_warning("CodeBlock serialized with unknown version '%d'.", version);
+		g_logger_warning("CodeBlock serialized with unknown version '{}'.", version);
 		return {};
 	}
 

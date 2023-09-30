@@ -1,11 +1,20 @@
 #include "renderer/Texture.h"
 #include "renderer/GLApi.h"
+#include "core/Application.h"
+#include "multithreading/GlobalThreadPool.h"
 
 #include <stb/stb_image.h>
 
 namespace MathAnim
 {
 	static const uint32 NULL_TEXTURE_ID = UINT32_MAX;
+
+	struct LazyLoadData
+	{
+		Texture texture;
+		TextureLoadedCallback callback;
+		unsigned char* decodedPixels;
+	};
 
 	static void bindTextureParameters(const Texture& texture);
 
@@ -88,18 +97,26 @@ namespace MathAnim
 		return *this;
 	}
 
-	Texture TextureBuilder::generate(bool generateFromFilepath)
+	Texture TextureBuilder::generateEmpty()
 	{
-		if (generateFromFilepath)
-		{
-			TextureUtil::generateFromFile(texture);
-		}
-		else
-		{
-			TextureUtil::generateEmptyTexture(texture);
-		}
-
+		TextureUtil::generateEmptyTexture(texture);
 		return texture;
+	}
+
+	Texture TextureBuilder::generateFromFile()
+	{
+		TextureUtil::generateFromFile(texture);
+		return texture;
+	}
+
+	Texture TextureBuilder::generateLazyFromFile(TextureLoadedCallback callback)
+	{
+		// This runs async
+		TextureUtil::generateFromFileLazy(callback, texture);
+
+		// Return a copy, the callback will be called once TextureUtil finishes processing it on a background thread
+		Texture copy = texture;
+		return copy;
 	}
 
 	Texture TextureBuilder::build()
@@ -110,14 +127,14 @@ namespace MathAnim
 	// ========================================================
 	// 	   Texture Member Functions
 	// ========================================================
-	void Texture::bind() const
+	void Texture::bind(int textureSlot) const
 	{
-		GL::bindTexture(GL_TEXTURE_2D, graphicsId);
+		GL::bindTexSlot(GL_TEXTURE_2D, graphicsId, textureSlot);
 	}
 
 	void Texture::unbind() const
 	{
-		GL::bindTexture(GL_TEXTURE_2D, 0);
+		GL::unbindTexture(GL_TEXTURE_2D);
 	}
 
 	void Texture::destroy()
@@ -129,12 +146,12 @@ namespace MathAnim
 	void Texture::uploadSubImage(int offsetX, int offsetY, int subWidth, int subHeight, uint8* buffer, size_t bufferLength, bool flipVertically) const
 	{
 		g_logger_assert(format != ByteFormat::None, "Cannot generate texture without color format.");
-		g_logger_assert(offsetX + subWidth <= this->width, "Sub-image out of range. OffsetX + width = %d which is greater than the texture width: %d", offsetX + subWidth, this->width);
-		g_logger_assert(offsetY + subHeight <= this->height, "Sub-image out of range. OffsetY + height = %d which is greater than the texture height: %d", offsetY + subHeight, this->height);
-		g_logger_assert(offsetX >= 0, "Sub-image out of range. OffsetX is negative: %d", offsetX);
-		g_logger_assert(offsetY >= 0, "Sub-image out of range. OffsetY is negative: %d", offsetY);
-		g_logger_assert(subWidth >= 0, "Sub-image out of range. Width is negative: %d", subWidth);
-		g_logger_assert(subHeight >= 0, "Sub-image out of range. Height is negative: %d", subHeight);
+		g_logger_assert(offsetX + subWidth <= this->width, "Sub-image out of range. OffsetX + width = {} which is greater than the texture width: {}", offsetX + subWidth, this->width);
+		g_logger_assert(offsetY + subHeight <= this->height, "Sub-image out of range. OffsetY + height = {} which is greater than the texture height: {}", offsetY + subHeight, this->height);
+		g_logger_assert(offsetX >= 0, "Sub-image out of range. OffsetX is negative: {}", offsetX);
+		g_logger_assert(offsetY >= 0, "Sub-image out of range. OffsetY is negative: {}", offsetY);
+		g_logger_assert(subWidth >= 0, "Sub-image out of range. Width is negative: {}", subWidth);
+		g_logger_assert(subHeight >= 0, "Sub-image out of range. Height is negative: {}", subHeight);
 
 		uint32 externalFormat = TextureUtil::toGlExternalFormat(format);
 		uint32 dataType = TextureUtil::toGlDataType(format);
@@ -153,7 +170,7 @@ namespace MathAnim
 			buffer = newBuffer;
 		}
 
-		this->bind();
+		GL::bindTexture(GL_TEXTURE_2D, this->graphicsId);
 		GL::texSubImage2D(GL_TEXTURE_2D, 0, offsetX, offsetY, subWidth, subHeight, externalFormat, dataType, buffer);
 
 		if (flipVertically)
@@ -224,6 +241,8 @@ namespace MathAnim
 				return GL_R8UI;
 			case ByteFormat::R8_F:
 				return GL_R8;
+			case ByteFormat::DepthStencil:
+				return GL_DEPTH24_STENCIL8;
 			case ByteFormat::None:
 				return GL_NONE;
 			}
@@ -255,6 +274,8 @@ namespace MathAnim
 				return GL_RED_INTEGER;
 			case ByteFormat::R8_F:
 				return GL_RED;
+			case ByteFormat::DepthStencil:
+				return GL_DEPTH_STENCIL;
 			case ByteFormat::None:
 				return GL_NONE;
 			}
@@ -286,6 +307,8 @@ namespace MathAnim
 				return GL_UNSIGNED_BYTE;
 			case ByteFormat::R8_F:
 				return GL_FLOAT;
+			case ByteFormat::DepthStencil:
+				return GL_UNSIGNED_INT_24_8;
 			case ByteFormat::None:
 				return GL_NONE;
 			}
@@ -316,6 +339,8 @@ namespace MathAnim
 			case ByteFormat::R8_UI:
 				return true;
 			case ByteFormat::None:
+				return false;
+			case ByteFormat::DepthStencil:
 				return false;
 			case ByteFormat::R8_F:
 				return false;
@@ -349,6 +374,8 @@ namespace MathAnim
 				return false;
 			case ByteFormat::None:
 				return false;
+			case ByteFormat::DepthStencil:
+				return false;
 			case ByteFormat::R8_F:
 				return false;
 			}
@@ -379,6 +406,8 @@ namespace MathAnim
 			case ByteFormat::R8_UI:
 				return false;
 			case ByteFormat::None:
+				return false;
+			case ByteFormat::DepthStencil:
 				return false;
 			case ByteFormat::R8_F:
 				return false;
@@ -435,6 +464,7 @@ namespace MathAnim
 			case ByteFormat::R8_F:
 				return sizeof(uint8);
 			case ByteFormat::None:
+			case ByteFormat::DepthStencil:
 				return 0;
 			}
 
@@ -446,9 +476,13 @@ namespace MathAnim
 			g_logger_assert(texture.path != "", "Cannot generate texture from file without a filepath provided.");
 			int channels;
 
+			stbi_set_flip_vertically_on_load(true);
 			unsigned char* pixels = stbi_load(texture.path.string().c_str(), &texture.width, &texture.height, &channels, 0);
-			// TODO: Do some sort of graceful error propagating here instead
-			g_logger_assert((pixels != nullptr), "STB failed to load image: %s\n-> STB Failure Reason: %s", texture.path.string().c_str(), stbi_failure_reason());
+			
+			if (pixels == nullptr)
+			{
+				g_logger_error("STB failed to load image: '{}'\n-> STB Failure Reason: '{}'", texture.path, stbi_failure_reason());
+			}
 
 			int bytesPerPixel = channels;
 			if (bytesPerPixel == 4)
@@ -461,7 +495,8 @@ namespace MathAnim
 			}
 			else
 			{
-				g_logger_warning("Unknown number of channels '%d' in image '%s'.", texture.path.string().c_str(), channels);
+				g_logger_warning("Unknown number of channels '{}' in image '{}'.", texture.path, channels);
+				stbi_image_free(pixels);
 				return;
 			}
 
@@ -472,11 +507,97 @@ namespace MathAnim
 
 			uint32 internalFormat = TextureUtil::toGlSizedInternalFormat(texture.format);
 			uint32 externalFormat = TextureUtil::toGlExternalFormat(texture.format);
-			g_logger_assert(internalFormat != GL_NONE && externalFormat != GL_NONE, "Tried to load image from file, but failed to identify internal format for image '%s'", texture.path.string().c_str());
+			g_logger_assert(internalFormat != GL_NONE && externalFormat != GL_NONE, "Tried to load image from file, but failed to identify internal format for image '{}'", texture.path);
 			GL::pixelStorei(GL_UNPACK_ALIGNMENT, 1);
 			GL::texImage2D(GL_TEXTURE_2D, 0, internalFormat, texture.width, texture.height, 0, externalFormat, GL_UNSIGNED_BYTE, pixels);
 
 			stbi_image_free(pixels);
+		}
+
+		// Called async
+		static void async_generateFromFileLazy(void* data, size_t dataSize)
+		{
+			g_logger_assert(dataSize == sizeof(LazyLoadData), "Invalid data passed to callback.");
+
+			LazyLoadData& lazyLoad = (*(LazyLoadData*)data);
+			Texture& texture = lazyLoad.texture;
+
+			g_logger_assert(texture.path != "", "Cannot generate texture from file without a filepath provided.");
+			int channels;
+
+			stbi_set_flip_vertically_on_load(true);
+			lazyLoad.decodedPixels = stbi_load(texture.path.string().c_str(), &texture.width, &texture.height, &channels, 0);
+
+			if (lazyLoad.decodedPixels == nullptr)
+			{
+				g_logger_error("STB failed to load image: '{}'\n-> STB Failure Reason: '{}'", texture.path, stbi_failure_reason());
+			}
+
+			int bytesPerPixel = channels;
+			if (bytesPerPixel == 4)
+			{
+				texture.format = ByteFormat::RGBA8_UI;
+			}
+			else if (bytesPerPixel == 3)
+			{
+				texture.format = ByteFormat::RGB8_UI;
+			}
+			else
+			{
+				stbi_image_free(lazyLoad.decodedPixels);
+				texture.format = ByteFormat::None;
+				g_logger_error("Unknown number of channels '{}' in image '{}'.", texture.path, channels);
+				return;
+			}
+		}
+
+		// Called from main thread
+		static void sync_generateFromFileLazyFinished(void* data, size_t dataSize)
+		{
+			g_logger_assert(dataSize == sizeof(LazyLoadData), "Invalid data passed to callback.");
+
+			LazyLoadData& lazyLoad = (*(LazyLoadData*)data);
+			Texture& texture = lazyLoad.texture;
+
+			if (texture.format == ByteFormat::None || lazyLoad.decodedPixels == nullptr)
+			{
+				return;
+			}
+
+			GL::genTextures(1, &texture.graphicsId);
+			GL::bindTexture(GL_TEXTURE_2D, texture.graphicsId);
+
+			bindTextureParameters(texture);
+
+			uint32 internalFormat = TextureUtil::toGlSizedInternalFormat(texture.format);
+			uint32 externalFormat = TextureUtil::toGlExternalFormat(texture.format);
+			g_logger_assert(internalFormat != GL_NONE && externalFormat != GL_NONE, "Tried to load image from file, but failed to identify internal format for image '{}'", texture.path);
+			GL::pixelStorei(GL_UNPACK_ALIGNMENT, 1);
+			GL::texImage2D(GL_TEXTURE_2D, 0, internalFormat, texture.width, texture.height, 0, externalFormat, GL_UNSIGNED_BYTE, lazyLoad.decodedPixels);
+
+			stbi_image_free(lazyLoad.decodedPixels);
+
+			lazyLoad.callback(texture);
+
+			lazyLoad.~LazyLoadData();
+			g_memory_free(data);
+		}
+
+		void generateFromFileLazy(TextureLoadedCallback textureLoadedCallback, const Texture& texture)
+		{
+			LazyLoadData* lazyLoad = (LazyLoadData*)g_memory_allocate(sizeof(LazyLoadData));
+			new(lazyLoad)LazyLoadData();
+
+			lazyLoad->callback = textureLoadedCallback;
+			lazyLoad->texture = texture;
+			Application::threadPool()->queueTask(
+				async_generateFromFileLazy,
+				"async_generateFromFileLazy",
+				lazyLoad,
+				sizeof(LazyLoadData),
+				Priority::Medium,
+				sync_generateFromFileLazyFinished
+			);
 		}
 
 		void generateEmptyTexture(Texture& texture)
@@ -518,11 +639,11 @@ namespace MathAnim
 			GL::texParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, TextureUtil::toGl(texture.magFilter));
 		}
 
-		GLint swizzleMask[4] = { 
+		GLint swizzleMask[4] = {
 			TextureUtil::toGlSwizzle(texture.swizzleFormat[0]),
-			TextureUtil::toGlSwizzle(texture.swizzleFormat[1]), 
-			TextureUtil::toGlSwizzle(texture.swizzleFormat[2]), 
-			TextureUtil::toGlSwizzle(texture.swizzleFormat[3]) 
+			TextureUtil::toGlSwizzle(texture.swizzleFormat[1]),
+			TextureUtil::toGlSwizzle(texture.swizzleFormat[2]),
+			TextureUtil::toGlSwizzle(texture.swizzleFormat[3])
 		};
 		GL::texParameteriv(GL_TEXTURE_2D, GL_TEXTURE_SWIZZLE_RGBA, swizzleMask);
 	}

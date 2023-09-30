@@ -5,10 +5,11 @@
 namespace MathAnim
 {
 	class GlobalThreadPool;
-	struct OrthoCamera;
 	class SvgCache;
 	struct Framebuffer;
 	struct Window;
+	struct Camera;
+	struct UndoSystemData;
 
 	enum class AnimState : uint8
 	{
@@ -52,10 +53,10 @@ namespace MathAnim
 		const std::filesystem::path& getCurrentProjectRoot();
 		const std::filesystem::path& getTmpDir();
 
-		// TODO: Ugly hack
-		OrthoCamera* getEditorCamera();
+		const Camera* getEditorCamera();
 		// TODO: Ugly hack
 		SvgCache* getSvgCache();
+		UndoSystemData* getUndoSystem();
 
 		GlobalThreadPool* threadPool();
 	}

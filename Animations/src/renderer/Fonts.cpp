@@ -107,7 +107,7 @@ namespace MathAnim
 			return iter->second;
 		}
 
-		g_logger_error("Glyph index '%d' does not exist in font '%s'.", glyphIndex, fontFilepath.c_str());
+		g_logger_error("Glyph index '{}' does not exist in font '{}'.", glyphIndex, fontFilepath);
 		static GlyphOutline defaultGlyph = {};
 		return defaultGlyph;
 	}
@@ -168,7 +168,7 @@ namespace MathAnim
 	{
 		if (this->glyphTextureCoords.find(codepoint) == this->glyphTextureCoords.end())
 		{
-			g_logger_warning("Trying to access glyph texture for unloaded glyph: '%c' in font '%s'.", codepoint, this->unsizedFont->fontFilepath.c_str());
+			g_logger_warning("Trying to access glyph texture for unloaded glyph: '{}' in font '{}'.", codepoint, this->unsizedFont->fontFilepath);
 			static GlyphTexture nullTexture = {
 				0,
 				Vec2{0, 0},
@@ -206,23 +206,17 @@ namespace MathAnim
 
 			g_logger_info("Initialized freetype library.");
 			initialized = true;
-
-#if defined(_WIN32)
-			defaultMonoFont = loadFont("C:\\Windows\\Fonts\\consola.ttf");
-#elif defined(__linux__)
-			defaultMonoFont = loadFont("/usr/share/fonts/liberation/LiberationMono-Regular.ttf");
-#endif
 		}
 
 		int createOutline(Font* font, uint32 character, GlyphOutline* outlineResult)
 		{
-			g_logger_assert(font->fontFace != nullptr, "Cannot create outline for uninitialized font '%s'.", font->fontFilepath.c_str());
+			g_logger_assert(font->fontFace != nullptr, "Cannot create outline for uninitialized font '{}'.", font->fontFilepath);
 
 			FT_Face fontFace = font->fontFace;
 			FT_UInt glyphIndex = FT_Get_Char_Index(fontFace, character);
 			if (glyphIndex == 0)
 			{
-				g_logger_warning("Character code '%c' not found. Missing glyph.", character);
+				g_logger_warning("Character code '{}' not found. Missing glyph.", character);
 				return 1;
 			}
 
@@ -230,7 +224,7 @@ namespace MathAnim
 			FT_Error error = FT_Load_Glyph(fontFace, glyphIndex, FT_LOAD_NO_SCALE);
 			if (error)
 			{
-				g_logger_error("Freetype could not load glyph for character code '%c'.", character);
+				g_logger_error("Freetype could not load glyph for character code '{}'.", character);
 				return 2;
 			}
 
@@ -241,7 +235,7 @@ namespace MathAnim
 			error = getOutline(glyph, &outline);
 			if (error)
 			{
-				g_logger_error("Could not get outline for '%c'.", character);
+				g_logger_error("Could not get outline for '{}'.", character);
 				return 3;
 			}
 
@@ -265,7 +259,7 @@ namespace MathAnim
 				}
 			}
 
-			g_logger_info("Caching sized font '%s'.", sizedFontKey.c_str());
+			g_logger_info("Caching sized font '{}'.", sizedFontKey);
 
 			SizedFont res;
 			res.unsizedFont = loadFont(filepath, defaultCharset);
@@ -275,7 +269,7 @@ namespace MathAnim
 				FT_Error error = FT_Set_Pixel_Sizes(res.unsizedFont->fontFace, fontSizePixels, fontSizePixels);
 				if (error)
 				{
-					g_logger_error("Freetype failed to set the pixel size for font '%s'.", filepath);
+					g_logger_error("Freetype failed to set the pixel size for font '{}'.", filepath);
 					unloadFont(res.unsizedFont);
 					return nullptr;
 				}
@@ -291,7 +285,7 @@ namespace MathAnim
 				.setMinFilter(FilterMode::Linear)
 				.setWrapS(WrapMode::None)
 				.setWrapT(WrapMode::None)
-				.generate();
+				.generateEmpty();
 
 			// Generate the texture and upload it to the GPU
 			uint8* textureMemory = (uint8*)g_memory_allocate(sizeof(uint8) * textureWidth * textureHeight);
@@ -304,7 +298,7 @@ namespace MathAnim
 				FT_UInt glyphIndex = FT_Get_Char_Index(res.unsizedFont->fontFace, codepoint);
 				if (glyphIndex == 0)
 				{
-					g_logger_warning("Character code '%c' not found. Missing glyph.", codepoint);
+					g_logger_warning("Character code '{}' not found. Missing glyph.", codepoint);
 					continue;
 				}
 
@@ -312,7 +306,7 @@ namespace MathAnim
 				FT_Error error = FT_Load_Glyph(res.unsizedFont->fontFace, glyphIndex, FT_LOAD_RENDER);
 				if (error)
 				{
-					g_logger_error("Freetype could not load glyph for character code '%c'.", codepoint);
+					g_logger_error("Freetype could not load glyph for character code '{}'.", codepoint);
 				}
 
 				FT_Bitmap& bitmap = res.unsizedFont->fontFace->glyph->bitmap;
@@ -326,7 +320,7 @@ namespace MathAnim
 
 				if (cursorY + bitmap.rows >= textureHeight)
 				{
-					g_logger_error("Ran out of texture room for font '%s'", filepath);
+					g_logger_error("Ran out of texture room for font '{}'", filepath);
 					continue;
 				}
 
@@ -383,7 +377,7 @@ namespace MathAnim
 			auto iter = loadedSizedFonts.find(fontKey);
 			if (iter == loadedSizedFonts.end())
 			{
-				g_logger_warning("Tried to unload sized font '%s' that was not cached.", fontKey.c_str());
+				g_logger_warning("Tried to unload sized font '{}' that was not cached.", fontKey);
 				return;
 			}
 
@@ -391,7 +385,7 @@ namespace MathAnim
 			iter->second.referenceCount--;
 			if (iter->second.referenceCount <= 0)
 			{
-				g_logger_info("Unloading sized font '%s' from cache.", fontKey.c_str());
+				g_logger_info("Unloading sized font '{}' from cache.", fontKey);
 			}
 
 			unloadFont(font->unsizedFont);
@@ -409,7 +403,7 @@ namespace MathAnim
 			auto iter = loadedSizedFonts.find(fontKey);
 			if (iter == loadedSizedFonts.end())
 			{
-				g_logger_warning("Tried to unload sized font that was not cached '%s'.", fontKey.c_str());
+				g_logger_warning("Tried to unload sized font that was not cached '{}'.", fontKey);
 				return;
 			}
 
@@ -431,19 +425,19 @@ namespace MathAnim
 				}
 			}
 
-			g_logger_info("Caching unsized font '%s'.", unsizedFontKey.c_str());
+			g_logger_info("Caching unsized font '{}'.", unsizedFontKey);
 
 			// Load the new font into freetype.
 			FT_Face face;
 			int error = FT_New_Face(library, filepath, 0, &face);
 			if (error == FT_Err_Unknown_File_Format)
 			{
-				g_logger_error("Unsupported font file format for '%s'. Could not load font.", filepath);
+				g_logger_error("Unsupported font file format for '{}'. Could not load font.", filepath);
 				return {};
 			}
 			else if (error)
 			{
-				g_logger_error("Font could not be opened or read or is broken '%s'. Could not load font.", filepath);
+				g_logger_error("Font could not be opened or read or is broken '{}'. Could not load font.", filepath);
 				return {};
 			}
 
@@ -475,7 +469,7 @@ namespace MathAnim
 			auto fontIter = loadedFonts.find(unsizedFontKey);
 			if (fontIter == loadedFonts.end())
 			{
-				g_logger_error("Tried to unload font that was never cached '%s'", font->fontFilepath.c_str());
+				g_logger_error("Tried to unload font that was never cached '{}'", font->fontFilepath);
 				return;
 			}
 
@@ -486,7 +480,7 @@ namespace MathAnim
 			}
 
 			// If the reference count is <= 0 then really unload it
-			g_logger_info("Unloading font '%s' from cache.", unsizedFontKey.c_str());
+			g_logger_info("Unloading font '{}' from cache.", unsizedFontKey);
 
 			for (std::pair<const uint32, GlyphOutline>& kv : font->glyphMap)
 			{
@@ -505,7 +499,7 @@ namespace MathAnim
 			auto iter = loadedFonts.find(unsizedFontKey);
 			if (iter == loadedFonts.end())
 			{
-				g_logger_warning("Tried to load font that was never cached '%s'.", filepath);
+				g_logger_warning("Tried to load font that was never cached '{}'.", filepath);
 				return;
 			}
 
@@ -514,7 +508,10 @@ namespace MathAnim
 
 		void unloadAllFonts()
 		{
-			unloadFont(defaultMonoFont);
+			if (defaultMonoFont)
+			{
+				unloadFont(defaultMonoFont);
+			}
 			defaultMonoFont = nullptr;
 
 			// Delete all unsized fonts
@@ -546,6 +543,16 @@ namespace MathAnim
 
 		Font* getDefaultMonoFont()
 		{
+			// Lazy load the font
+			if (!defaultMonoFont)
+			{
+#if defined(_WIN32)
+				defaultMonoFont = loadFont("C:\\Windows\\Fonts\\consola.ttf");
+#elif defined(__linux__)
+				defaultMonoFont = loadFont("/usr/share/fonts/liberation/LiberationMono-Regular.ttf");
+#endif
+			}
+
 			return defaultMonoFont;
 		}
 
@@ -557,7 +564,7 @@ namespace MathAnim
 				int error = createOutline(&font, i, &outlineResult);
 				if (error)
 				{
-					g_logger_warning("Could not create glyph outline for character '%c'", i);
+					g_logger_warning("Could not create glyph outline for character '{}'", (char)i);
 					continue;
 				}
 

@@ -1,10 +1,13 @@
+#include "editor/EditorGui.h"
 #include "editor/panels/SceneHierarchyPanel.h"
 #include "editor/panels/InspectorPanel.h"
+#include "editor/UndoSystem.h"
 #include "animation/Animation.h"
 #include "animation/AnimationManager.h"
 #include "utils/IconsFontAwesome5.h"
 #include "renderer/Colors.h"
 #include "core/Input.h"
+#include "core/Application.h"
 
 #include <imgui.h>
 #include <imgui_internal.h>
@@ -42,9 +45,10 @@ namespace MathAnim
 		static std::vector<BetweenMetadata> inBetweenBuffer;
 		static std::vector<SceneTreeMetadata> orderedEntities;
 		static SceneTreeMoveData dragDropMove;
+		static bool mouseHoveredSceneHeirarchyPanel = false;
 
 		// --------- Internal functions ---------
-		static void imGuiRightClickPopup(AnimationManagerData* am);
+		static void openContextMenu(AnimationManagerData* am, SceneTreeMetadata* elementClicked);
 		static bool doTreeNode(AnimationManagerData* am, SceneTreeMetadata& element, const AnimObject& animObject, AnimObjId nextAnimObjParentId, bool* dropTargetEffected);
 		static bool isDescendantOf(AnimationManagerData* am, AnimObjId childAnimObjId, AnimObjId parentAnimObjId);
 		static bool imGuiSceneHeirarchyWindow(int* inBetweenIndex);
@@ -121,6 +125,7 @@ namespace MathAnim
 
 			// Now iterate through all the entities
 			int activeElementIndex = -1;
+			bool contextItemMenuOpen = false;
 			for (int i = 0; i < (int)orderedEntities.size(); i++)
 			{
 				SceneTreeMetadata& element = orderedEntities[i];
@@ -128,7 +133,7 @@ namespace MathAnim
 				if (!animObject)
 				{
 					animObject = AnimationManager::getPendingObject(am, element.animObjectId);
-					g_logger_assert(animObject != nullptr, "Scene hierarchy tried to access anim object with id '%d' that does not exist and is not pending addition.", element.animObjectId);
+					g_logger_assert(animObject != nullptr, "Scene hierarchy tried to access anim object with id '{}' that does not exist and is not pending addition.", element.animObjectId);
 				}
 
 				if (element.selected)
@@ -175,6 +180,13 @@ namespace MathAnim
 						ImGui::TreePop();
 					}
 				}
+
+				if (ImGui::BeginPopupContextItem())
+				{
+					contextItemMenuOpen = true;
+					openContextMenu(am, &element);
+					ImGui::EndPopup();
+				}
 			}
 
 			if (movedAnimObjectInSceneHierarchy)
@@ -198,10 +210,19 @@ namespace MathAnim
 				ImGui::EndDragDropTarget();
 			}
 
-			imGuiRightClickPopup(am);
+			if (!contextItemMenuOpen)
+			{
+				if (ImGui::BeginPopupContextWindow())
+				{
+					openContextMenu(am, nullptr);
+					ImGui::EndPopup();
+				}
+			}
 
 			// Handle delete animation object
-			if (ImGui::IsWindowHovered() && activeElementIndex != -1 && Input::keyPressed(GLFW_KEY_DELETE))
+			mouseHoveredSceneHeirarchyPanel = ImGui::IsWindowHovered();
+			bool mouseHoveredSceneOrEditorPanel = mouseHoveredSceneHeirarchyPanel || EditorGui::mouseHoveredEditorViewport();
+			if (mouseHoveredSceneOrEditorPanel && activeElementIndex != -1 && Input::keyPressed(GLFW_KEY_DELETE))
 			{
 				const AnimObject* animObject = AnimationManager::getObject(am, orderedEntities[activeElementIndex].animObjectId);
 				if (animObject)
@@ -210,9 +231,10 @@ namespace MathAnim
 					//    EVENT --- DeleteAnimObject
 					// That way I don't have to worry about who's responsibility it is to remove
 					// the anim objects from the animation manager and the timeline
-					deleteAnimObject(*animObject);
-					AnimationManager::removeAnimObject(am, animObject->id);
-					InspectorPanel::setActiveAnimObject(am, NULL_ANIM_OBJECT);
+					UndoSystem::removeObjFromScene(
+						Application::getUndoSystem(),
+						animObject->id
+					);
 				}
 			}
 
@@ -307,40 +329,172 @@ namespace MathAnim
 			//}
 		}
 
-		// --------- Internal functions ---------
-		static void imGuiRightClickPopup(AnimationManagerData* am)
+		bool mouseIsHovered()
 		{
-			// String buffer to write object names
-			char buffer[256];
-			size_t bufferSize = sizeof(buffer);
+			return mouseHoveredSceneHeirarchyPanel;
+		}
 
-			if (ImGui::BeginPopupContextWindow())
+		// --------- Internal functions ---------
+		static void openContextMenu(AnimationManagerData* am, SceneTreeMetadata* elementClicked)
+		{
+			const Vec4& grayedTextColor = Colors::Neutral[3];
+
+			ImGui::BeginDisabled(elementClicked == nullptr);
+			if (ImGui::MenuItem("Copy", "Ctrl+C"))
 			{
-				for (int i = 1; i < (int)AnimObjectTypeV1::Length; i++)
-				{
-					if (AnimObject::isInternalObjectOnly((AnimObjectTypeV1)i))
-					{
-						continue;
-					}
+				EditorGui::copyObjectToClipboard(am, elementClicked->animObjectId);
+			}
+			ImGui::EndDisabled();
 
-#ifdef sprintf_s
-					int strRes = sprintf_s(buffer, bufferSize, "Add %s", AnimObject::getAnimObjectName((AnimObjectTypeV1)i));
-#else
-					int strRes = snprintf(buffer, bufferSize, "Add %s", AnimObject::getAnimObjectName((AnimObjectTypeV1)i));
-#endif
-					if (strRes != -1)
-					{
-						if (ImGui::MenuItem(buffer))
-						{
-							AnimObject animObject = AnimObject::createDefault(am, (AnimObjectTypeV1)i);
-							AnimationManager::addAnimObject(am, animObject);
-							addNewAnimObject(animObject);
-						}
-					}
+			if (ImGui::MenuItem("Paste", "Ctrl+V"))
+			{
+				AnimObjId newParent = elementClicked != nullptr
+					? elementClicked->animObjectId
+					: NULL_ANIM_OBJECT;
+				EditorGui::pasteObjectFromClipboardToParent(am, newParent);
+			}
+
+			ImGui::BeginDisabled(elementClicked == nullptr);
+			if (ImGui::MenuItem("Duplicate", "Ctrl+D"))
+			{
+				EditorGui::duplicateObject(am, elementClicked->animObjectId);
+			}
+
+			if (ImGui::MenuItem("Delete", "Del"))
+			{
+				UndoSystem::removeObjFromScene(
+					Application::getUndoSystem(),
+					elementClicked->animObjectId
+				);
+			}
+			ImGui::EndDisabled();
+
+			ImGui::Separator();
+
+			if (ImGui::MenuItem("Camera"))
+			{
+				if (AnimationManager::hasActiveCamera(am))
+				{
+					g_logger_error("Already an active camera in the scene, cannot add another.");
+				}
+				else
+				{
+					UndoSystem::addNewObjToScene(
+						Application::getUndoSystem(),
+						(int)AnimObjectTypeV1::Camera
+					);
+				}
+			}
+
+			if (ImGui::BeginMenu("Shapes"))
+			{
+				ImGui::TextColored(grayedTextColor, "2D Shapes");
+				ImGui::Separator();
+
+				if (ImGui::MenuItem("Square"))
+				{
+					UndoSystem::addNewObjToScene(
+						Application::getUndoSystem(),
+						(int)AnimObjectTypeV1::Square
+					);
 				}
 
-				ImGui::EndPopup();
+				if (ImGui::MenuItem("Circle"))
+				{
+					UndoSystem::addNewObjToScene(
+						Application::getUndoSystem(),
+						(int)AnimObjectTypeV1::Circle
+					);
+				}
+
+				if (ImGui::MenuItem("Arrow"))
+				{
+					UndoSystem::addNewObjToScene(
+						Application::getUndoSystem(),
+						(int)AnimObjectTypeV1::Arrow
+					);
+				}
+
+				if (ImGui::MenuItem("Axis"))
+				{
+					UndoSystem::addNewObjToScene(
+						Application::getUndoSystem(),
+						(int)AnimObjectTypeV1::Axis
+					);
+				}
+
+				ImGui::TextColored(grayedTextColor, "3D Shapes");
+				ImGui::Separator();
+
+				if (ImGui::MenuItem("Cube"))
+				{
+					UndoSystem::addNewObjToScene(
+						Application::getUndoSystem(),
+						(int)AnimObjectTypeV1::Cube
+					);
+				}
+
+				ImGui::EndMenu();
 			}
+
+			if (ImGui::BeginMenu("Text"))
+			{
+				if (ImGui::MenuItem("Text Object"))
+				{
+					UndoSystem::addNewObjToScene(
+						Application::getUndoSystem(),
+						(int)AnimObjectTypeV1::TextObject
+					);
+				}
+
+				// TODO: FIXME, LaTeX objects are very broken right now
+				ImGui::BeginDisabled();
+				if (ImGui::MenuItem("LaTeX"))
+				{
+					UndoSystem::addNewObjToScene(
+						Application::getUndoSystem(),
+						(int)AnimObjectTypeV1::LaTexObject
+					);
+				}
+				ImGui::EndDisabled();
+
+				if (ImGui::MenuItem("Code Block"))
+				{
+					UndoSystem::addNewObjToScene(
+						Application::getUndoSystem(),
+						(int)AnimObjectTypeV1::CodeBlock
+					);
+				}
+
+				ImGui::EndMenu();
+			}
+
+			ImGui::Separator();
+
+			if (ImGui::MenuItem("SVG File"))
+			{
+				UndoSystem::addNewObjToScene(
+					Application::getUndoSystem(),
+					(int)AnimObjectTypeV1::SvgFileObject
+				);
+			}
+
+			if (ImGui::MenuItem("Image"))
+			{
+				UndoSystem::addNewObjToScene(
+					Application::getUndoSystem(),
+					(int)AnimObjectTypeV1::Image
+				);
+			}
+
+			if (ImGui::MenuItem("Script"))
+			{
+				UndoSystem::addNewObjToScene(
+					Application::getUndoSystem(),
+					(int)AnimObjectTypeV1::ScriptObject
+				);
+			}
+
 		}
 
 		static bool doTreeNode(AnimationManagerData* am, SceneTreeMetadata& element, const AnimObject& animObject, AnimObjId nextAnimObjParentId, bool* dropTargetEffected)

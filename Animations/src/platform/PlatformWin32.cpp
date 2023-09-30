@@ -1,6 +1,11 @@
 #ifdef _WIN32
 #include "platform/Platform.h"
 #include "core.h"
+#include "core/Window.h"
+
+#define GLFW_EXPOSE_NATIVE_WIN32
+#include <glfw/glfw3native.h>
+#undef GLFW_EXPOSE_NATIVE_WIN32
 
 #include <io.h>
 #include <Windows.h>
@@ -24,6 +29,15 @@ namespace MathAnim
 		static bool stringsEqualIgnoreCase(const char* str1, const char* str2);
 		static std::vector<std::string> availableFonts = {};
 		static bool availableFontsCached = false;
+		static HCRYPTPROV hCryptoProvider = 0;
+
+		void free()
+		{
+			if (hCryptoProvider != 0)
+			{
+				CryptReleaseContext(hCryptoProvider, 0);
+			}
+		}
 
 		const std::vector<std::string>& getAvailableFonts()
 		{
@@ -222,7 +236,7 @@ namespace MathAnim
 								}
 								else
 								{
-									g_logger_warning("Buffer too small to contain install location for '%s'.", currentDisplayName);
+									g_logger_warning("Buffer too small to contain install location for '{}'.", currentDisplayName);
 									buffer[0] = '\0';
 									RegCloseKey(appKey);
 									RegCloseKey(uninstallKey);
@@ -230,7 +244,7 @@ namespace MathAnim
 								}
 							}
 
-							g_logger_warning("Found app '%s' but failed to find the InstallLocation.", currentDisplayName);
+							g_logger_warning("Found app '{}' but failed to find the InstallLocation.", currentDisplayName);
 							RegCloseKey(appKey);
 							RegCloseKey(uninstallKey);
 							return false;
@@ -307,7 +321,7 @@ namespace MathAnim
 			))
 			{
 				DWORD dwStatus = GetLastError();
-				g_logger_error("Failed to launch process '%s': ", dwStatus);
+				g_logger_error("Failed to launch process '{}': ", dwStatus);
 
 				TerminateProcess(pi.hProcess, 0);
 				CloseHandle(pi.hProcess);
@@ -317,7 +331,7 @@ namespace MathAnim
 			}
 
 			// Wait until child process exits.
-			g_logger_log("Running program: '%s'", finalArgs.c_str());
+			g_logger_log("Running program: '{}'", finalArgs);
 			WaitForSingleObject(pi.hProcess, 25000);
 			TerminateProcess(pi.hProcess, 0);
 			if (fileHandle) CloseHandle(fileHandle);
@@ -355,7 +369,7 @@ namespace MathAnim
 		{
 			if (!DeleteFileA(filename))
 			{
-				g_logger_error("Delete file '%s' failed with: %d", filename, GetLastError());
+				g_logger_error("Delete file '{}' failed with: {}", filename, GetLastError());
 				return false;
 			}
 
@@ -417,7 +431,7 @@ namespace MathAnim
 
 			if (res->userData->fileHandle == INVALID_HANDLE_VALUE)
 			{
-				g_logger_error("Failed to create file '%s' for memmapping. Last error: %d", filepath.c_str(), GetLastError());
+				g_logger_error("Failed to create file '{}' for memmapping. Last error: {}", filepath, GetLastError());
 				freeMemMappedFile(res);
 				return nullptr;
 			}
@@ -443,7 +457,7 @@ namespace MathAnim
 			if (res->userData->fileMappingHandle == NULL)
 			{
 				res->userData->fileMappingHandle = INVALID_HANDLE_VALUE;
-				g_logger_error("Failed to memmap a temporary file. Last error: '%d'", GetLastError());
+				g_logger_error("Failed to memmap a temporary file. Last error: '{}'", GetLastError());
 				freeMemMappedFile(res);
 				return nullptr;
 			}
@@ -457,7 +471,7 @@ namespace MathAnim
 			);
 			if (baseAddress == NULL)
 			{
-				g_logger_error("Failed to create a mapped view of the memmap handle. Last Error: '%d'", GetLastError());
+				g_logger_error("Failed to create a mapped view of the memmap handle. Last Error: '{}'", GetLastError());
 				freeMemMappedFile(res);
 				return nullptr;
 			}
@@ -486,7 +500,7 @@ namespace MathAnim
 				BOOL res = UnmapViewOfFile(file->data);
 				if (!res)
 				{
-					g_logger_error("Failed to unmap the file view for a memmapped file. Last error: '%d'", GetLastError());
+					g_logger_error("Failed to unmap the file view for a memmapped file. Last error: '{}'", GetLastError());
 				}
 			}
 
@@ -497,7 +511,7 @@ namespace MathAnim
 					BOOL res = CloseHandle(file->userData->fileMappingHandle);
 					if (!res)
 					{
-						g_logger_error("Failed to close file mapping handle for a memmapped file. Last error: '%d'", GetLastError());
+						g_logger_error("Failed to close file mapping handle for a memmapped file. Last error: '{}'", GetLastError());
 					}
 				}
 
@@ -506,7 +520,7 @@ namespace MathAnim
 					BOOL res = CloseHandle(file->userData->fileHandle);
 					if (!res)
 					{
-						g_logger_error("Failed to close file handle for a memmapped file. Last error: '%d'", GetLastError());
+						g_logger_error("Failed to close file handle for a memmapped file. Last error: '{}'", GetLastError());
 					}
 				}
 
@@ -531,27 +545,29 @@ namespace MathAnim
 		std::string md5FromString(const char* str, size_t length, int md5Length)
 		{
 			constexpr int maxMd5Length = 1024;
-			g_logger_assert(md5Length < maxMd5Length, "Cannot generate md5 greater than %d characters.", maxMd5Length);
+			g_logger_assert(md5Length < maxMd5Length, "Cannot generate md5 greater than '{}' characters.", maxMd5Length);
 
 			// Get handle to the crypto provider
-			HCRYPTPROV hProv = 0;
-			if (!CryptAcquireContext(&hProv,
-				NULL,
-				NULL,
-				PROV_RSA_FULL,
-				CRYPT_VERIFYCONTEXT))
+			if (hCryptoProvider == 0)
 			{
-				DWORD dwStatus = GetLastError();
-				g_logger_error("CryptAcquireContext failed: %d", dwStatus);
-				return "";
+				if (!CryptAcquireContext(&hCryptoProvider,
+					NULL,
+					NULL,
+					PROV_RSA_FULL,
+					CRYPT_VERIFYCONTEXT))
+				{
+					DWORD dwStatus = GetLastError();
+					g_logger_error("CryptAcquireContext failed: '{}'", dwStatus);
+					return "";
+				}
 			}
 
 			HCRYPTHASH hHash = 0;
-			if (!CryptCreateHash(hProv, CALG_MD5, 0, 0, &hHash))
+			if (!CryptCreateHash(hCryptoProvider, CALG_MD5, 0, 0, &hHash))
 			{
 				DWORD dwStatus = GetLastError();
-				g_logger_error("CryptAcquireContext failed: %d", dwStatus);
-				CryptReleaseContext(hProv, 0);
+				g_logger_error("CryptAcquireContext failed: '{}'", dwStatus);
+				CryptReleaseContext(hCryptoProvider, 0);
 				return "";
 			}
 
@@ -561,8 +577,8 @@ namespace MathAnim
 			if (!CryptHashData(hHash, (BYTE*)str, (DWORD)length, 0))
 			{
 				DWORD dwStatus = GetLastError();
-				g_logger_error("CryptHashData failed: %d", dwStatus);
-				CryptReleaseContext(hProv, 0);
+				g_logger_error("CryptHashData failed: '{}'", dwStatus);
+				CryptReleaseContext(hCryptoProvider, 0);
 				CryptDestroyHash(hHash);
 				return "";
 			}
@@ -582,13 +598,25 @@ namespace MathAnim
 			else
 			{
 				DWORD dwStatus = GetLastError();
-				g_logger_error("CryptGetHashParam failed: %d", dwStatus);
+				g_logger_error("CryptGetHashParam failed: '{}'", dwStatus);
 			}
 
 			CryptDestroyHash(hHash);
-			CryptReleaseContext(hProv, 0);
 
 			return hashRes;
+		}
+
+		bool setCursorPos(const Window& window, const Vec2i& cursorPos)
+		{
+			RECT rect;
+			if (GetWindowRect(glfwGetWin32Window((GLFWwindow*)window.windowPtr), &rect))
+			{
+				int titleBarHeight = GetSystemMetrics(SM_CYCAPTION);
+				int resizableHeight = GetSystemMetrics(SM_CYFRAME) + GetSystemMetrics(SM_CXPADDEDBORDER);
+				return (bool)SetCursorPos(cursorPos.x + rect.left, cursorPos.y + rect.top + titleBarHeight + resizableHeight);
+			}
+
+			return false;
 		}
 
 		// --------------- Internal Functions ---------------
@@ -598,7 +626,7 @@ namespace MathAnim
 			if (wideLength + 1 >= bufferLength)
 			{
 				buffer[0] = '\0';
-				g_logger_warning("Could not convert wide string to char string. Wide string length '%d' buffer length '%d'.", wideLength, bufferLength);
+				g_logger_warning("Could not convert wide string to char string. Wide string length '{}' buffer length '{}'.", wideLength, bufferLength);
 				return;
 			}
 

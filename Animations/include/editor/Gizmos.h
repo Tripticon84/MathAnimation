@@ -2,21 +2,14 @@
 #define MATH_ANIM_GIZMOS_H
 #include "core.h"
 
+#include "editor/imgui/ImGuiExtended.h"
+
 namespace MathAnim
 {
 	struct Framebuffer;
 	struct AnimationManagerData;
-	struct OrthoCamera;
-	struct PerspectiveCamera;
-
-	enum class GizmoVariant : uint8
-	{
-		None = 0,
-		Free = 0x1,
-		Horizontal = 0x2,
-		Vertical = 0x4,
-		All = 0xF
-	};
+	struct Camera;
+	struct Texture;
 
 	enum class GizmoType : uint8
 	{
@@ -31,13 +24,19 @@ namespace MathAnim
 		void init();
 		void update(AnimationManagerData* am);
 		void render(AnimationManagerData* am);
+		void renderOrientationGizmo(const Camera& editorCamera);
 		void free();
 
-		bool anyGizmoActive();
+		const Texture& getCameraOrientationTexture();
 
-		bool translateGizmo(const char* gizmoName, Vec3* position, GizmoVariant variant = GizmoVariant::All);
-		bool rotateGizmo(const char* gizmoName, Vec3* rotation, GizmoVariant variant = GizmoVariant::All);
-		bool scaleGizmo(const char* gizmoName, Vec3* scale, GizmoVariant variant = GizmoVariant::All);
+		bool anyGizmoActive();
+		void changeVisualMode(GizmoType type);
+		const char* getVisualModeStr();
+		GizmoType getVisualMode();
+
+		ImGuiDataEx<Vec3> translateGizmo(const char* gizmoName, Vec3* position);
+		ImGuiDataEx<Vec3> rotateGizmo(const char* gizmoName, const Vec3& gizmoPosition, Vec3* rotation);
+		ImGuiDataEx<Vec3> scaleGizmo(const char* gizmoName, const Vec3& gizmoPosition, Vec3* scale);
 	}
 }
 

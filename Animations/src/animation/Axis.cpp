@@ -4,6 +4,7 @@
 #include "core/Serialization.hpp"
 #include "svg/Svg.h"
 #include "math/CMath.h"
+#include "editor/panels/SceneHierarchyPanel.h"
 
 #include <nlohmann/json.hpp>
 
@@ -11,6 +12,7 @@ namespace MathAnim
 {
 	void Axis::init(AnimObject*)
 	{
+		g_logger_warning("TODO: FIXME");
 		//g_logger_assert(parent->_svgObjectStart == nullptr && parent->svgObject == nullptr, "Axis object initialized twice.");
 		//g_logger_assert(parent->children.size() == 0, "Axis object initialized twice.");
 
@@ -37,7 +39,7 @@ namespace MathAnim
 		//	Svg::lineTo(xAxis._svgObjectStart, { xEnd, 0.0f });
 
 		//	// Draw the ticks
-		//	g_logger_assert(xRange.max > xRange.min, "Invalid x range [%d, %d]. Axis range must be in increasing order.", xRange.min, xRange.max);
+		//	g_logger_assert(xRange.max > xRange.min, "Invalid x range [{}, {}]. Axis range must be in increasing order.", xRange.min, xRange.max);
 		//	float numTicks = ((float)xRange.max - (float)xRange.min) / xStep;
 		//	float distanceBetweenTicks = axesLength.x / numTicks;
 		//	int xNumber = xRange.min;
@@ -88,7 +90,7 @@ namespace MathAnim
 		//	Svg::lineTo(yAxis._svgObjectStart, { 0.0f, yEnd });
 
 		//	// Draw the ticks
-		//	g_logger_assert(yRange.max > yRange.min, "Invalid y range [%d, %d]. Axis range must be in increasing order.", yRange.min, yRange.max);
+		//	g_logger_assert(yRange.max > yRange.min, "Invalid y range [{}, {}]. Axis range must be in increasing order.", yRange.min, yRange.max);
 		//	float numTicks = ((float)yRange.max - (float)yRange.min) / yStep;
 		//	float distanceBetweenTicks = axesLength.y / numTicks;
 		//	int yNumber = yRange.min;
@@ -136,7 +138,7 @@ namespace MathAnim
 		//	Svg::lineTo(parent->_svgObjectStart, { 0.0f, 0.0f, zEnd });
 
 		//	// Draw the ticks
-		//	g_logger_assert(zRange.max > zRange.min, "Invalid z range [%d, %d]. Axis range must be in increasing order.", zRange.min, zRange.max);
+		//	g_logger_assert(zRange.max > zRange.min, "Invalid z range [{}, {}]. Axis range must be in increasing order.", zRange.min, zRange.max);
 		//	float numTicks = (float)zRange.max - (float)zRange.min;
 		//	float distanceBetweenTicks = axesLength.z / numTicks;
 		//	Vec3 cursor = Vec3{ 0.0f, -tickWidth / 2.0f, zStart };
@@ -148,6 +150,26 @@ namespace MathAnim
 		//	}
 		//	Svg::closeContour(parent->_svgObjectStart);
 		//}
+	}
+
+	void Axis::reInit(AnimationManagerData* am, AnimObject* obj)
+	{
+		// First remove all generated children, which were generated as a result
+		// of this object (presumably)
+		// NOTE: This is direct descendants, no recursive children here
+		for (int i = 0; i < obj->generatedChildrenIds.size(); i++)
+		{
+			AnimObject* child = AnimationManager::getMutableObject(am, obj->generatedChildrenIds[i]);
+			if (child)
+			{
+				SceneHierarchyPanel::deleteAnimObject(*child);
+				AnimationManager::removeAnimObject(am, obj->generatedChildrenIds[i]);
+			}
+		}
+		obj->generatedChildrenIds.clear();
+
+		// Next init again which should regenerate the children
+		init(obj);
 	}
 
 	void Axis::serialize(nlohmann::json& memory) const
@@ -171,6 +193,7 @@ namespace MathAnim
 		switch (version)
 		{
 		case 2:
+		case 3:
 		{
 			Axis res = {};
 
@@ -191,7 +214,7 @@ namespace MathAnim
 		}
 		break;
 		default:
-			g_logger_error("Tried to deserialize unknown version of axis %d. It looks like you have corrupted scene data.");
+			g_logger_error("Tried to deserialize unknown version of axis '{}'. It looks like you have corrupted scene data.", version);
 			break;
 		}
 
@@ -236,7 +259,7 @@ namespace MathAnim
 		}
 		break;
 		default:
-			g_logger_error("Tried to deserialize unknown version of axis %d. It looks like you have corrupted scene data.");
+			g_logger_error("Tried to deserialize unknown version of axis '{}'. It looks like you have corrupted scene data.", version);
 			break;
 		}
 		return {};

@@ -10,7 +10,7 @@ namespace MathAnim
 	struct AnimObject;
 	struct Animation;
 	struct Framebuffer;
-	struct OrthoCamera;
+	struct Camera;
 
 	struct AnimationManagerData;
 
@@ -22,6 +22,14 @@ namespace MathAnim
 		void resetToFrame(AnimationManagerData* am, uint32 absoluteFrame);
 		void calculateAnimationKeyFrames(AnimationManagerData* am);
 
+		/**
+		 * @brief Adds this animation object to the animation manager. 
+		 *        IMPORTANT: This function takes ownership of this object, so any references
+		 *        to the object after adding it using this function are undefined behavior.
+		 * 
+		 * @param am Animation Manager
+		 * @param object The object to add
+		*/
 		void addAnimObject(AnimationManagerData* am, const AnimObject& object);
 		void addAnimation(AnimationManagerData* am, const Animation& animation);
 
@@ -34,13 +42,15 @@ namespace MathAnim
 		bool setAnimationTime(AnimationManagerData* am, AnimId anim, int frameStart, int duration);
 		void setAnimationTrack(AnimationManagerData* am, AnimId anim, int track);
 
-		Framebuffer prepareFramebuffer(int outputWidth, int outputHeight);
 		void render(AnimationManagerData* am, int deltaFrame);
 
 		int lastAnimatedFrame(const AnimationManagerData* am);
 		bool isPastLastFrame(const AnimationManagerData* am);
-		const AnimObject* getActiveOrthoCamera(const AnimationManagerData* am);
-		void setActiveOrthoCamera(AnimationManagerData* am, AnimObjId id);
+
+		const Camera& getActiveCamera(const AnimationManagerData* am);
+		bool hasActiveCamera(const AnimationManagerData* am);
+		void setActiveCamera(AnimationManagerData* am, AnimObjId cameraObj);
+		void calculateCameraMatrices(AnimationManagerData* am);
 
 		// NOTE: This function is slow, only use this as a backup if getObject fails
 		const AnimObject* getPendingObject(const AnimationManagerData* am, AnimObjId animObj);

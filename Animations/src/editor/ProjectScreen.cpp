@@ -2,6 +2,7 @@
 #include "core/ProjectApp.h"
 #include "core/Serialization.hpp"
 #include "core/Window.h"
+#include "core/Profiling.h"
 #include "renderer/Colors.h"
 #include "renderer/Texture.h"
 #include "platform/Platform.h"
@@ -53,6 +54,8 @@ namespace MathAnim
 
 		void init(const std::filesystem::path& appRoot)
 		{
+			MP_PROFILE_EVENT("ProjectScreen::init");
+
 			createNewProject = false;
 
 			float dpiScale = ProjectApp::getWindow()->getContentScale();
@@ -96,7 +99,7 @@ namespace MathAnim
 				{
 					projects[i].texture = TextureBuilder()
 						.setFilepath(projects[i].previewImageFilepath.c_str())
-						.generate(true);
+						.generateFromFile();
 				}
 				else
 				{
@@ -434,7 +437,7 @@ namespace MathAnim
 					return;
 				}
 
-				g_logger_info("No project metadata found. Cannot recall last opened project on this machine because no file '%s' exists.", metadataFilepath.c_str());
+				g_logger_info("No project metadata found. Cannot recall last opened project on this machine because no file '{}' exists.", metadataFilepath);
 				return;
 			}
 
@@ -451,7 +454,7 @@ namespace MathAnim
 					versionMajor = DESERIALIZE_VALUE_INLINE(projectJson["Version"], Major, 0);
 					versionMinor = DESERIALIZE_VALUE_INLINE(projectJson["Version"], Minor, 0);
 					const std::string& versionFull = DESERIALIZE_VALUE_INLINE(projectJson["Version"], Full, "0.0");
-					g_logger_info("Project app opened with metadata version %s", versionFull.c_str());
+					g_logger_info("Project app opened with metadata version '{}'", versionFull);
 				}
 
 				if (versionMajor == 1)
@@ -473,7 +476,7 @@ namespace MathAnim
 							}
 							else
 							{
-								g_logger_warning("Tried to load invalid project '%s'. Project filepath, image filepath, or name were possibly undefined.", res.projectName.c_str());
+								g_logger_warning("Tried to load invalid project '{}'. Project filepath, image filepath, or name were possibly undefined.", res.projectName);
 							}
 						}
 					}
@@ -481,7 +484,7 @@ namespace MathAnim
 			}
 			catch (const std::exception& ex)
 			{
-				g_logger_error("Failed to load projects metadata '%s' with error: '%s'", metadataFilepath.c_str(), ex.what());
+				g_logger_error("Failed to load projects metadata '{}' with error: '{}'", metadataFilepath, ex.what());
 			}
 		}
 
@@ -511,7 +514,7 @@ namespace MathAnim
 			memory.read<uint64>(&magicNumber);
 			if (magicNumber != 0xDEADBEEF)
 			{
-				g_logger_error("Project file corrupted. Magic number not 0xDEADBEEF, instead got: 0x%8x", magicNumber);
+				g_logger_error("Project file corrupted. Magic number not 0xDEADBEEF, instead got: '{:#010x}'", magicNumber);
 				goto cleanup;
 			}
 			memory.read<int32>(&selectedProjectIndex);
@@ -587,7 +590,7 @@ namespace MathAnim
 			}
 			catch (const std::exception& ex)
 			{
-				g_logger_error("Failed to save current scene with error: '%s'", ex.what());
+				g_logger_error("Failed to save current scene with error: '{}'", ex.what());
 			}
 		}
 

@@ -6,8 +6,9 @@
 #include "renderer/Colors.h"
 #include "renderer/GladLayer.h"
 #include "renderer/Renderer.h"
-#include "renderer/OrthoCamera.h"
-#include "renderer/PerspectiveCamera.h"
+#include "renderer/Camera.h"
+#include "renderer/Deprecated_OrthoCamera.h"
+#include "renderer/Deprecated_PerspectiveCamera.h"
 #include "renderer/Shader.h"
 #include "renderer/Framebuffer.h"
 #include "renderer/Texture.h"
@@ -30,6 +31,7 @@
 #include "editor/panels/InspectorPanel.h"
 #include "editor/panels/MenuBar.h"
 #include "editor/panels/ExportPanel.h"
+#include "editor/UndoSystem.h"
 #include "parsers/SyntaxHighlighter.h"
 #include "audio/Audio.h"
 #include "latex/LaTexLayer.h"
@@ -48,6 +50,7 @@ namespace MathAnim
 {
 	namespace Application
 	{
+		static uint32 MAX_UNDO_HISTORY = 300;
 		static AnimState animState = AnimState::Pause;
 
 		static int outputWidth = 3840;
@@ -60,8 +63,8 @@ namespace MathAnim
 		static Window* window = nullptr;
 		static Framebuffer mainFramebuffer;
 		static Framebuffer editorFramebuffer;
-		static OrthoCamera editorCamera2D;
-		static PerspectiveCamera editorCamera3D;
+		static EditorCamera* editorCamera = nullptr;
+		static UndoSystemData* undoSystem = nullptr;
 		static int absoluteCurrentFrame = -1;
 		static int absolutePrevFrame = -1;
 		static float accumulatedTime = 0.0f;
@@ -92,28 +95,30 @@ namespace MathAnim
 
 		void init(const char* projectFile)
 		{
-			// Initialize these just in case this is a new project
-			editorCamera2D.position = Vec2{ viewportWidth / 2.0f, viewportHeight / 2.0f };
-			editorCamera2D.projectionSize = Vec2{ viewportWidth, viewportHeight };
-			editorCamera2D.zoom = 1.0f;
+			auto begin = std::chrono::high_resolution_clock::now();
 
-			editorCamera3D.position = glm::vec3(0.0f);
-			editorCamera3D.fov = 70.0f;
-			editorCamera3D.forward = glm::vec3(1.0f, 0.0f, 0.0f);
+			// Initialize these just in case this is a new project
+			editorCamera = EditorCameraController::init(Camera::createDefault());
 
 			// Initialize other global systems
 			globalThreadPool = new GlobalThreadPool(std::thread::hardware_concurrency());
 			//globalThreadPool = new GlobalThreadPool(true);
 
-			// Initiaize GLFW/Glad
-			GlVersion glVersion = GladLayer::init();
+			// Initialize GLFW
+			GladLayer::initGlfw();
+
+			// Create the window
 			window = new Window(1920, 1080, winTitle, WindowFlags::OpenMaximized);
 			window->setVSync(true);
 
-			// Initialize Onigiruma
+			// Initialize OpenGL functions
+			GlVersion glVersion = GladLayer::init();
+
+			// Initialize Oniguruma
 			OnigEncoding use_encs[1];
 			use_encs[0] = ONIG_ENCODING_ASCII;
 			onig_initialize(use_encs, sizeof(use_encs) / sizeof(use_encs[0]));
+			onig_set_warn_func([](const char* s) { g_logger_warning("Onig Warning: {}", s); });
 
 			Fonts::init();
 			Renderer::init();
@@ -127,8 +132,8 @@ namespace MathAnim
 
 			LaTexLayer::init();
 
-			mainFramebuffer = AnimationManager::prepareFramebuffer(outputWidth, outputHeight);
-			editorFramebuffer = AnimationManager::prepareFramebuffer(outputWidth, outputHeight);
+			mainFramebuffer = Renderer::prepareFramebuffer(outputWidth, outputHeight);
+			editorFramebuffer = Renderer::prepareFramebuffer(outputWidth, outputHeight);
 
 			currentProjectRoot = std::filesystem::path(projectFile).parent_path();
 			currentProjectTmpDir = currentProjectRoot / "tmp";
@@ -147,6 +152,25 @@ namespace MathAnim
 
 			GL::enable(GL_BLEND);
 			GL::blendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+
+			auto end = std::chrono::high_resolution_clock::now();
+			auto numMs = std::chrono::duration_cast<std::chrono::milliseconds>(end - begin).count();
+			CppUtils::IO::printf("|> Initialization took: ");
+			if (numMs < 400)
+			{
+				CppUtils::IO::setForegroundColor(CppUtils::GREEN);
+			}
+			else if (numMs < 500)
+			{
+				CppUtils::IO::setForegroundColor(CppUtils::YELLOW);
+			}
+			else
+			{
+				CppUtils::IO::setForegroundColor(CppUtils::RED);
+			}
+
+			CppUtils::IO::printf("{}ms\n", numMs);
+			CppUtils::IO::resetColor();
 		}
 
 		void run()
@@ -195,36 +219,57 @@ namespace MathAnim
 				deltaFrame = absoluteCurrentFrame - absolutePrevFrame;
 				absolutePrevFrame = absoluteCurrentFrame;
 
-				// Update systems all systems/collect systems draw calls
+				// Update systems all systems
 				GizmoManager::update(am);
-				EditorCameraController::updateOrtho(editorCamera2D);
-				// Update Animation logic and collect draw calls
-				AnimationManager::render(am, deltaFrame);
+				EditorCameraController::update(deltaTime, editorCamera);
 				LaTexLayer::update();
 				LuauLayer::update();
+
+				// Update camera matrices
+				// NOTE: The editor camera matrices are updated in EditorCameraController::update
+				AnimationManager::calculateCameraMatrices(am);
 
 				// Render all animation draw calls to main framebuffer
 				if (EditorGui::mainViewportActive() || ExportPanel::isExportingVideo())
 				{
 					MP_PROFILE_EVENT("MainLoop_RenderToMainViewport");
-					Renderer::bindAndUpdateViewportForFramebuffer(mainFramebuffer);
-					Renderer::renderToFramebuffer(mainFramebuffer, am);
+					if (AnimationManager::hasActiveCamera(am))
+					{
+						Renderer::pushCamera2D(&AnimationManager::getActiveCamera(am));
+						Renderer::pushCamera3D(&AnimationManager::getActiveCamera(am));
+						AnimationManager::render(am, deltaFrame);
+						Renderer::popCamera3D();
+						Renderer::popCamera2D();
 
-					Renderer::clearDrawCalls();
+						Renderer::bindAndUpdateViewportForFramebuffer(mainFramebuffer);
+						Renderer::renderToFramebuffer(mainFramebuffer, am, "OutputVP_Main_Framebuffer_Pass");
+
+						Renderer::clearDrawCalls();
+					}
+					else
+					{
+						// TODO: Display some sort of graphic on screen to let user know they don't have active camera
+					}
 				}
 
-				// Render active objects with outlines around them
+				// Render editor viewport and active objects with outlines around them
 				if (EditorGui::editorViewportActive())
 				{
 					Renderer::bindAndUpdateViewportForFramebuffer(editorFramebuffer);
 					Renderer::clearFramebuffer(editorFramebuffer, "#3a3a39"_hex);
 
+					Renderer::pushCamera2D(&EditorCameraController::getCamera(editorCamera));
+					Renderer::pushCamera3D(&EditorCameraController::getCamera(editorCamera));
+
 					{
 						// Then render the rest of the stuff
 						MP_PROFILE_EVENT("MainLoop_RenderToEditorViewport");
 						editorFramebuffer.clearDepthStencil();
-						AnimationManager::render(am, 0);
-						Renderer::renderToFramebuffer(editorFramebuffer, editorCamera2D, editorCamera3D);
+
+						// Collect draw calls
+						AnimationManager::render(am, deltaFrame);
+
+						Renderer::renderToFramebuffer(editorFramebuffer, "EditorVP_Main_Framebuffer_Pass");
 
 						Renderer::clearDrawCalls();
 					}
@@ -242,10 +287,16 @@ namespace MathAnim
 						MP_PROFILE_EVENT("MainLoop_RenderGizmos");
 						editorFramebuffer.clearDepthStencil();
 						GizmoManager::render(am);
-						Renderer::renderToFramebuffer(editorFramebuffer, editorCamera2D, editorCamera3D);
+						Renderer::renderToFramebuffer(editorFramebuffer, "Gizmos");
+						Renderer::clearDrawCalls();
 
+						// Draw the gizmo manager miscellaneous stuff
+						GizmoManager::renderOrientationGizmo(EditorCameraController::getCamera(editorCamera));
 						Renderer::clearDrawCalls();
 					}
+
+					Renderer::popCamera2D();
+					Renderer::popCamera3D();
 				}
 
 				// Bind the window framebuffer and render ImGui results
@@ -260,11 +311,14 @@ namespace MathAnim
 				MenuBar::update();
 				ImGui::ShowDemoWindow();
 				SceneManagementPanel::update(sceneData);
-				EditorGui::update(mainFramebuffer, editorFramebuffer, am);
+				EditorGui::update(mainFramebuffer, editorFramebuffer, am, deltaTime);
 				ImGuiLayer::endFrame();
 				GL::popDebugGroup();
 
+				// End frame stuff
 				AnimationManager::endFrame(am);
+				EditorCameraController::endFrame(editorCamera);
+				Renderer::endFrame();
 
 				// Miscellaneous
 				globalThreadPool->processFinishedTasks();
@@ -283,10 +337,23 @@ namespace MathAnim
 
 			// If the window is closing, save the last rendered frame to a preview image
 			// TODO: Do this a better way
-			// Like no hard coded image path here and hard coded number of components
-			AnimationManager::render(am, 0);
-			Renderer::bindAndUpdateViewportForFramebuffer(mainFramebuffer);
-			Renderer::renderToFramebuffer(mainFramebuffer, am);
+			//       Like no hard coded image path here and hard coded number of components
+			if (AnimationManager::hasActiveCamera(am))
+			{
+				Renderer::pushCamera2D(&AnimationManager::getActiveCamera(am));
+				Renderer::pushCamera3D(&AnimationManager::getActiveCamera(am));
+				AnimationManager::render(am, 0);
+				Renderer::popCamera3D();
+				Renderer::popCamera2D();
+
+				Renderer::bindAndUpdateViewportForFramebuffer(mainFramebuffer);
+				Renderer::renderToFramebuffer(mainFramebuffer, am, "AppClosing_Screenshot");
+			}
+			else
+			{
+				// TODO: Add graphic warning no active camera here or something
+			}
+
 			Pixel* pixels = mainFramebuffer.readAllPixelsRgb8(0);
 			std::filesystem::path outputFile = (currentProjectRoot / "projectPreview.png");
 			if (mainFramebuffer.width > 1280 || mainFramebuffer.height > 720)
@@ -339,6 +406,7 @@ namespace MathAnim
 
 			mainFramebuffer.destroy();
 			editorFramebuffer.destroy();
+			EditorCameraController::free(editorCamera);
 
 			onig_end();
 			Highlighters::free();
@@ -347,6 +415,7 @@ namespace MathAnim
 			LuauLayer::free();
 			SceneManagementPanel::free();
 			EditorGui::free(am);
+			UndoSystem::free(undoSystem);
 			AnimationManager::free(am);
 			Fonts::unloadAllFonts();
 			Renderer::free();
@@ -359,6 +428,7 @@ namespace MathAnim
 			delete globalThreadPool;
 
 			GladLayer::deinit();
+			Platform::free();
 		}
 
 		void saveProject()
@@ -373,7 +443,7 @@ namespace MathAnim
 			}
 			catch (const std::exception& ex)
 			{
-				g_logger_error("Failed to save current scene with error: '%s'", ex.what());
+				g_logger_error("Failed to save current scene with error: '{}'", ex.what());
 			}
 
 			saveCurrentScene();
@@ -404,7 +474,7 @@ namespace MathAnim
 			}
 			catch (const std::exception& ex)
 			{
-				g_logger_error("Failed to save current scene with error: '%s'", ex.what());
+				g_logger_error("Failed to save current scene with error: '{}'", ex.what());
 			}
 		}
 
@@ -445,7 +515,7 @@ namespace MathAnim
 			}
 			catch (const std::exception& ex)
 			{
-				g_logger_error("Failed to load project '%s' with error: '%s'", projectFilepath.c_str(), ex.what());
+				g_logger_error("Failed to load project '{}' with error: '{}'", projectFilepath, ex.what());
 			}
 		}
 
@@ -461,7 +531,7 @@ namespace MathAnim
 			FILE* fp = fopen(projectFilepath.c_str(), "rb");
 			if (!fp)
 			{
-				g_logger_warning("Could not load project '%s', error opening file: %s.", projectFilepath.c_str(), strerror(errno));
+				g_logger_warning("Could not load project '{}', error opening file: '{}'.", projectFilepath, strerror(errno));
 				return;
 			}
 
@@ -492,6 +562,8 @@ namespace MathAnim
 		void loadScene(const std::string& sceneName)
 		{
 			std::string filepath = (currentProjectSceneDir / sceneToFilename(sceneName, ".json")).string();
+			g_logger_log("Loading scene: {}", filepath);
+
 			if (!Platform::fileExists(filepath.c_str()))
 			{
 				// Check if a legacy project exists and try to load that, if loading fails
@@ -511,7 +583,7 @@ namespace MathAnim
 
 			if (!Platform::fileExists(filepath.c_str()))
 			{
-				g_logger_error("Missing scene file '%s'. Cannot load scene.", filepath.c_str());
+				g_logger_error("Missing scene file '{}'. Cannot load scene.", filepath);
 				resetToFrame(0);
 				return;
 			}
@@ -553,7 +625,7 @@ namespace MathAnim
 			}
 			catch (const std::exception& ex)
 			{
-				g_logger_error("Failed to load scene '%s' with error: '%s'", filepath.c_str(), ex.what());
+				g_logger_error("Failed to load scene '{}' with error: '{}'", filepath, ex.what());
 			}
 		}
 
@@ -569,7 +641,7 @@ namespace MathAnim
 			FILE* fp = fopen(filepath.c_str(), "rb");
 			if (!fp)
 			{
-				g_logger_warning("LEGACY: Could not load scene '%s', error opening file.", filepath.c_str());
+				g_logger_warning("LEGACY: Could not load scene '{}', error opening file.", filepath);
 				resetToFrame(0);
 				return;
 			}
@@ -607,13 +679,9 @@ namespace MathAnim
 			}
 			if (cameraData.data)
 			{
-				// Version    -> u32
-				// camera2D   -> OrthoCamera
-				// camera3D   -> PerspCamera
-				uint32 version = 1;
-				cameraData.read<uint32>(&version);
-				editorCamera2D = OrthoCamera::legacy_deserialize(cameraData, version);
-				editorCamera3D = PerspectiveCamera::legacy_deserialize(cameraData, version);
+				// NOTE: Legacy projects will have the editor camera automatically upgraded
+				//       to the new camera type. That means that the data will be lost
+				//       but it should be fine
 			}
 
 			animationData.free();
@@ -652,7 +720,7 @@ namespace MathAnim
 				}
 			}
 
-			g_logger_warning("Cannot change to unknown scene name '%s'", sceneName.c_str());
+			g_logger_warning("Cannot change to unknown scene name '{}'", sceneName);
 		}
 
 		void setEditorPlayState(AnimState state)
@@ -731,14 +799,19 @@ namespace MathAnim
 			return currentProjectTmpDir;
 		}
 
-		OrthoCamera* getEditorCamera()
+		const Camera* getEditorCamera()
 		{
-			return &editorCamera2D;
+			return &EditorCameraController::getCamera(editorCamera);
 		}
 
 		SvgCache* getSvgCache()
 		{
 			return svgCache;
+		}
+
+		UndoSystemData* getUndoSystem()
+		{
+			return undoSystem;
 		}
 
 		GlobalThreadPool* threadPool()
@@ -750,8 +823,7 @@ namespace MathAnim
 		{
 			nlohmann::json cameraData = nlohmann::json();
 
-			editorCamera2D.serialize(cameraData["EditorCamera2D"]);
-			editorCamera3D.serialize(cameraData["EditorCamera3D"]);
+			EditorCameraController::serialize(editorCamera, cameraData["EditorCamera"]);
 
 			return cameraData;
 		}
@@ -760,21 +832,46 @@ namespace MathAnim
 		{
 			switch (version)
 			{
+			case 3:
+			{
+				if (cameraData.contains("EditorCamera"))
+				{
+					EditorCameraController::free(editorCamera);
+					editorCamera = EditorCameraController::deserialize(cameraData["EditorCamera"], version);
+				}
+			}
+			break;
 			case 2:
 			{
+				// Upgrading legacy projects will default to the orthographic camera
+				Camera newCamera = editorCamera != nullptr
+					? EditorCameraController::getCamera(editorCamera)
+					: Camera::createDefault();
 				if (cameraData.contains("EditorCamera2D"))
 				{
-					editorCamera2D = OrthoCamera::deserialize(cameraData["EditorCamera2D"], version);
+					OrthoCamera oldCamera2D = OrthoCamera::deserialize(cameraData["EditorCamera2D"], version);
+					newCamera.position = CMath::vector3From2(oldCamera2D.position);
+					newCamera.position.z = -2;
+					newCamera.aspectRatioFraction.x = (int)oldCamera2D.projectionSize.x;
+					newCamera.aspectRatioFraction.y = (int)oldCamera2D.projectionSize.y;
 				}
-				if (cameraData.contains("EditorCamera3D"))
+				else if (cameraData.contains("EditorCamera3D"))
 				{
-					editorCamera3D = PerspectiveCamera::deserialize(cameraData["EditorCamera3D"], version);
+					PerspectiveCamera oldCamera3D = PerspectiveCamera::deserialize(cameraData["EditorCamera3D"], version);
+					newCamera.position = CMath::convert(oldCamera3D.position);
+					newCamera.fov = oldCamera3D.fov;
+					newCamera.orientation = glm::quat(oldCamera3D.orientation);
 				}
+
+				newCamera.calculateMatrices(true);
+
+				EditorCameraController::free(editorCamera);
+				editorCamera = EditorCameraController::init(newCamera);
 			}
 			break;
 			default:
 			{
-				g_logger_warning("Editor data serialized with unknown version: %d", version);
+				g_logger_warning("Editor data serialized with unknown version: '{}'", version);
 			}
 			}
 		}
@@ -804,6 +901,7 @@ namespace MathAnim
 
 		static void freeSceneSystems()
 		{
+			UndoSystem::free(undoSystem);
 			AnimationManager::free(am);
 			EditorSettings::free();
 		}
@@ -811,6 +909,7 @@ namespace MathAnim
 		static void initializeSceneSystems()
 		{
 			am = AnimationManager::create();
+			undoSystem = UndoSystem::init(am, MAX_UNDO_HISTORY);
 			EditorSettings::init();
 		}
 	}
