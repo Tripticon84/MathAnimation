@@ -33,12 +33,12 @@ jobs:
         pushd build
         cmake ..
         popd
-        dotnet publish build/MathAnimationsPrj.sln -c Release -o out
+        dotnet publish D:/a/MathAnimation/MathAnimation/build/MathAnimationsPrj.sln
         echo "##[endgroup]"
     - name: Package compiled files
       run: |
         echo "##[group]Package compiled files"
-        7z a -t7z -r MathAnimations.7z D:/a/MathAnimation/MathAnimation/build
+        7z a -t7z -r MathAnimations.7z ./MathAnimation/MathAnimation/build
         echo "##[endgroup]"
     - name: Publish
       uses: actions/upload-artifact@v2
