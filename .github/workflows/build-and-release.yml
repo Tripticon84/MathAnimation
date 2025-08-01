@@ -1,0 +1,196 @@
+name: Build and Release
+
+on:
+  push:
+    tags:
+      - 'v*'  # Déclenche le workflow quand un tag version est poussé (ex: v1.0.0)
+  workflow_dispatch:  # Permet de déclencher manuellement le workflow
+
+env:
+  BUILD_TYPE: Release
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      with:
+        submodules: recursive
+        token: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: Setup CMake
+      uses: jwlawson/actions-setup-cmake@v2
+      with:
+        cmake-version: '3.24.2'
+
+    - name: Setup YASM
+      run: |
+        Invoke-WebRequest -Uri "http://www.tortall.net/projects/yasm/releases/yasm-1.3.0-win64.exe" -OutFile "yasm.exe"
+        mkdir -p "$env:RUNNER_TEMP/yasm"
+        Move-Item "yasm.exe" "$env:RUNNER_TEMP/yasm/yasm.exe"
+        echo "$env:RUNNER_TEMP/yasm" >> $env:GITHUB_PATH
+      shell: pwsh
+
+    - name: Setup MSVC
+      uses: microsoft/setup-msbuild@v2
+
+    - name: Configure CMake
+      run: |
+        mkdir build
+        cd build
+        cmake .. -G "Visual Studio 17 2022" -A x64 -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }}
+
+    - name: Build
+      run: |
+        cd build
+        cmake --build . --config ${{ env.BUILD_TYPE }} --parallel
+
+    - name: Package artifacts
+      run: |
+        mkdir release-windows
+        # Copier l'exécutable principal
+        Get-ChildItem -Path "build/bin/${{ env.BUILD_TYPE }}" -Recurse -Include "*.exe" | Copy-Item -Destination "release-windows/"
+        # Copier les DLLs nécessaires
+        Get-ChildItem -Path "build/bin/${{ env.BUILD_TYPE }}" -Recurse -Include "*.dll" | Copy-Item -Destination "release-windows/"
+        # Copier les assets
+        if (Test-Path "assets") {
+          Copy-Item -Path "assets" -Destination "release-windows/" -Recurse
+        }
+        # Copier les fichiers de licence et documentation
+        Copy-Item -Path "README.md" -Destination "release-windows/"
+        Copy-Item -Path "EULA.txt" -Destination "release-windows/"
+      shell: pwsh
+
+    - name: Create ZIP archive
+      run: |
+        Compress-Archive -Path "release-windows/*" -DestinationPath "MathAnimation-Windows-x64.zip"
+      shell: pwsh
+
+    - name: Upload Windows artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: MathAnimation-Windows-x64
+        path: MathAnimation-Windows-x64.zip
+
+  build-linux:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      with:
+        submodules: recursive
+        token: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: Install dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y \
+          build-essential \
+          cmake \
+          ninja-build \
+          yasm \
+          pkg-config \
+          libgl1-mesa-dev \
+          libglu1-mesa-dev \
+          libxrandr-dev \
+          libxinerama-dev \
+          libxcursor-dev \
+          libxi-dev \
+          libxext-dev \
+          libxfixes-dev \
+          libasound2-dev
+
+    - name: Configure CMake
+      run: |
+        mkdir build
+        cd build
+        cmake .. -G Ninja -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }}
+
+    - name: Build
+      run: |
+        cd build
+        ninja
+
+    - name: Package artifacts
+      run: |
+        mkdir release-linux
+        # Copier l'exécutable principal
+        find build/bin/${{ env.BUILD_TYPE }} -type f -executable -exec cp {} release-linux/ \;
+        # Copier les bibliothèques partagées si nécessaire
+        find build/bin/${{ env.BUILD_TYPE }} -name "*.so*" -exec cp {} release-linux/ \;
+        # Copier les assets
+        if [ -d "assets" ]; then
+          cp -r assets release-linux/
+        fi
+        # Copier les fichiers de licence et documentation
+        cp README.md release-linux/
+        cp EULA.txt release-linux/
+
+    - name: Create TAR archive
+      run: |
+        tar -czf MathAnimation-Linux-x64.tar.gz -C release-linux .
+
+    - name: Upload Linux artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: MathAnimation-Linux-x64
+        path: MathAnimation-Linux-x64.tar.gz
+
+  create-release:
+    needs: [build-windows, build-linux]
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/')
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Download Windows artifacts
+      uses: actions/download-artifact@v4
+      with:
+        name: MathAnimation-Windows-x64
+        path: ./artifacts
+
+    - name: Download Linux artifacts
+      uses: actions/download-artifact@v4
+      with:
+        name: MathAnimation-Linux-x64
+        path: ./artifacts
+
+    - name: Get version from tag
+      id: get_version
+      run: echo "VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+
+    - name: Create Release
+      uses: softprops/action-gh-release@v1
+      with:
+        tag_name: ${{ steps.get_version.outputs.VERSION }}
+        name: Release ${{ steps.get_version.outputs.VERSION }}
+        body: |
+          ## MathAnimation Release ${{ steps.get_version.outputs.VERSION }}
+
+          Nouvelle version de MathAnimation avec les améliorations suivantes :
+
+          ### Fichiers disponibles :
+          - `MathAnimation-Windows-x64.zip` : Version Windows 64-bit
+          - `MathAnimation-Linux-x64.tar.gz` : Version Linux 64-bit
+
+          ### Installation :
+          1. Téléchargez le fichier correspondant à votre système d'exploitation
+          2. Extrayez l'archive
+          3. Lancez l'exécutable MathAnimations
+
+          ### Plateformes supportées :
+          - Windows 10/11 (64-bit)
+          - Linux (64-bit)
+
+          Consultez le README.md pour plus d'informations sur l'utilisation.
+        draft: false
+        prerelease: false
+        files: |
+          ./artifacts/MathAnimation-Windows-x64.zip
+          ./artifacts/MathAnimation-Linux-x64.tar.gz
+        token: ${{ secrets.GITHUB_TOKEN }}
